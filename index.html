@@ -9,7 +9,7 @@
         body { font-family: sans-serif; text-align: center; padding: 15px; background-color: #f8f9fa; margin: 0; }
         h2 { margin: 10px 0 15px 0; font-size: 22px; }
         
-        #camera-select { margin-bottom: 10px; padding: 8px; font-size: 15px; border-radius: 5px; width: 100%; max-width: 450px; }
+        #camera-select { margin-bottom: 12px; padding: 8px; font-size: 15px; border-radius: 5px; width: 100%; max-width: 450px; }
         
         /* 模式選擇按鈕區塊 */
         .mode-container {
@@ -60,7 +60,7 @@
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
 
-        #reader { width: 100%; max-width: 450px; margin: 0 auto; background: black; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow: hidden; }
+        #reader { width: 100%; max-width: 450px; margin: 0 auto; background: black; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow: hidden; min-height: 250px; }
         #result { margin-top: 20px; font-size: 18px; font-weight: bold; color: #333; white-space: pre-wrap; line-height: 1.5; min-height: 60px; }
 
         /* 彈出分頁 (Modal) 樣式 */
@@ -131,7 +131,7 @@
     </div>
 
     <div id="reader"></div>
-    <div id="result">請選擇模式並對準 QR Code 進行掃描...</div>
+    <div id="result">相機啟動中，請稍候...</div>
 
     <!-- 彈出已借出清單視窗 -->
     <div id="borrowedModal" class="modal-overlay" onclick="outsideClose(event)">
@@ -148,7 +148,7 @@
 
     <script>
         // ★★★ 請替換成您的 GAS 網頁應用程式網址 ★★★
-        const API_URL = "https://script.google.com/macros/s/AKfycbxwtngmSkeOPwFi5zo6rheh9ahj27zJof1JoRutNL5eURqSSNmNjERtsxkm_9wIAV5L/exec"; 
+        const API_URL = "https://script.google.com/macros/s/AKfycbyFINwMCr9N1JVmWHsX2NtEH7vp6aFkS3iMmduCD7wNhD3_QtOlCALPzhxWLLZQBsps/exec"; 
 
         let isProcessing = false; 
         let currentMode = "borrow"; // 預設為借出模式
@@ -186,7 +186,6 @@
             resultDiv.style.color = "#0056b3";
             resultDiv.innerText = `讀取到編號：${equipmentId}\n正在執行【${modeText}】處理中...`;
             
-            // 帶入選擇的 action 傳給 GAS
             fetch(`${API_URL}?id=${encodeURIComponent(equipmentId)}&action=${currentMode}`)
                 .then(response => response.text())
                 .then(text => {
@@ -195,7 +194,7 @@
                     setTimeout(() => { 
                         isProcessing = false; 
                         resultDiv.style.color = "#333";
-                        resultDiv.innerText = "請對準下一個 QR Code 進行掃描...";
+                        resultDiv.innerText = "請選擇模式並對準下一個 QR Code 進行掃描...";
                     }, 3500); 
                 })
                 .catch(error => {
@@ -204,6 +203,48 @@
                     setTimeout(() => { isProcessing = false; }, 3500);
                 });
         }
+
+        // 啟動相機
+        function startCamera(cameraId) {
+            html5QrCode.start(cameraId, config, onScanSuccess)
+                .then(() => { 
+                    document.getElementById('result').innerText = "請選擇模式並對準 QR Code 進行掃描..."; 
+                })
+                .catch(err => { 
+                    console.error("相機啟動失敗:", err);
+                    document.getElementById('result').innerText = "相機啟動失敗，請檢查權限或重新整理網頁。";
+                });
+        }
+
+        // 初始化取得相機清單
+        Html5Qrcode.getCameras().then(devices => {
+            if (devices && devices.length) {
+                cameraSelect.innerHTML = ""; // 清空選項
+                devices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.id;
+                    option.text = device.label || `相機 ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+
+                // 預設啟動第一顆相機
+                startCamera(cameraSelect.value);
+
+                // 監聽相機切換事件
+                cameraSelect.addEventListener('change', () => {
+                    html5QrCode.stop().then(() => {
+                        startCamera(cameraSelect.value);
+                    }).catch(err => {
+                        console.error("停止鏡頭失敗", err);
+                    });
+                });
+            } else {
+                document.getElementById('result').innerText = "找不到可用的相機裝置。";
+            }
+        }).catch(err => {
+            console.error("取得相機清單失敗:", err);
+            document.getElementById('result').innerText = "無法取得相機清單，請確認瀏覽器相機權限或使用 HTTPS 網址。";
+        });
 
         // 開啟已借出清單視窗
         function openBorrowedModal() {
@@ -247,35 +288,6 @@
                 closeBorrowedModal();
             }
         }
-
-        function startCamera(cameraId) {
-            html5QrCode.start(cameraId, config, onScanSuccess)
-                .then(() => { document.getElementById('result').innerText = "請選擇模式並對準 QR Code 進行掃描..."; })
-                .catch(err => { console.error(err); });
-        }
-
-        Html5Qrcode.getCameras().then(devices => {
-            if (devices && devices.length) {
-                devices.forEach((device, index) => {
-                    const option = document.createElement('option');
-                    option.value = device.id;
-                    option.text = device.label || `相機 ${index + 1}`;
-                    cameraSelect.appendChild(option);
-                });
-
-                startCamera(cameraSelect.value);
-
-                cameraSelect.addEventListener('change', () => {
-                    html5QrCode.stop().then(() => {
-                        startCamera(cameraSelect.value);
-                    }).catch(err => {
-                        console.error("停止鏡頭失敗", err);
-                    });
-                });
-            }
-        }).catch(err => {
-            document.getElementById('result').innerText = "無法取得相機清單，請確認權限。";
-        });
     </script>
 </body>
 </html>
