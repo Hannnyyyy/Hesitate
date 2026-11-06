@@ -11,7 +11,7 @@
         #result { margin-top: 25px; font-size: 18px; font-weight: bold; color: #333; white-space: pre-wrap; line-height: 1.5; min-height: 60px; }
         #camera-select { margin-bottom: 15px; padding: 8px; font-size: 16px; border-radius: 5px; width: 100%; max-width: 300px; }
         
-        /* 彈出分頁 (Modal) 樣式 */
+        /* 通用彈出視窗 (Modal) 樣式 */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -66,10 +66,20 @@
             cursor: pointer;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
-        .btn-primary:active {
-            transform: scale(0.98);
+        .btn-action {
+            width: 100%;
+            padding: 12px;
+            font-size: 18px;
+            font-weight: bold;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-top: 10px;
         }
-        /* 借出清單項目卡片化 */
+        .btn-borrow { background-color: #28a745; }
+        .btn-return { background-color: #17a2b8; }
+        
         .borrowed-item {
             padding: 10px 12px;
             margin-bottom: 8px;
@@ -85,15 +95,32 @@
     
     <select id="camera-select"></select>
     
-    <!-- 跳出分頁按鈕 -->
+    <!-- 查看已借出清單按鈕 -->
     <div class="action-bar">
         <button class="btn-primary" onclick="openBorrowedModal()">📋 查看目前已借出清單</button>
     </div>
 
     <div id="reader"></div>
-    <div id="result">相機啟動中，請稍候...</div>
+    <div id="result">請對準 QR Code 進行掃描...</div>
 
-    <!-- 彈出分頁視窗 (Modal) -->
+    <!-- 1. 掃描後選擇動作的彈出視窗 -->
+    <div id="actionModal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span>⚡ 選擇設備操作</span>
+                <button class="close-btn" onclick="closeActionModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="text-align: center;">
+                <p style="font-size: 16px; color: #333;">已成功讀取設備編號：</p>
+                <h3 id="scanned-id-display" style="color: #007bff; margin: 5px 0 20px 0;"></h3>
+                
+                <button class="btn-action btn-borrow" onclick="submitAction('borrow')">🟢 確認借出</button>
+                <button class="btn-action btn-return" onclick="submitAction('return')">🔵 確認歸還</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. 查看已借出清單的彈出視窗 -->
     <div id="borrowedModal" class="modal-overlay" onclick="outsideClose(event)">
         <div class="modal-content">
             <div class="modal-header">
@@ -108,9 +135,10 @@
 
     <script>
         // ★★★ 請替換成您的 GAS 網頁應用程式網址 ★★★
-        const API_URL = "https://script.google.com/macros/s/AKfycbzRo85vTmvd1ZcAY16gQ2JV9Twji1ymIbu6qvF96TfAgOoVHIFtvXtszWPfT80ReuMA/exec"; 
+        const API_URL = "https://script.google.com/macros/s/AKfycbxwtngmSkeOPwFi5zo6rheh9ahj27zJof1JoRutNL5eURqSSNmNjERtsxkm_9wIAV5L/exec"; 
 
         let isProcessing = false; 
+        let currentScannedId = "";
         const html5QrCode = new Html5Qrcode("reader");
         const config = { fps: 10, qrbox: { width: 250, height: 250 } };
         const cameraSelect = document.getElementById('camera-select');
@@ -123,11 +151,22 @@
                 decodedText = decodedText.split("text=")[1].split("&")[0];
             }
             
+            currentScannedId = decodedText.trim();
+            
+            // 彈出選擇動作視窗
+            document.getElementById('scanned-id-display.innerText = currentScannedId; // wait fix below
+            document.getElementById('scanned-id-display').innerText = currentScannedId;
+            document.getElementById('actionModal').style.display = "flex";
+        }
+
+        // 執行借出或歸還請求
+        function submitAction(actionType) {
+            closeActionModal();
             const resultDiv = document.getElementById('result');
             resultDiv.style.color = "#0056b3";
-            resultDiv.innerText = `讀取到編號：${decodedText}\n連線確認狀態中...`;
+            resultDiv.innerText = `正在處理編號 ${currentScannedId} (${actionType === 'borrow' ? '借出' : '歸還'})...`;
             
-            fetch(API_URL + "?id=" + encodeURIComponent(decodedText))
+            fetch(`${API_URL}?id=${encodeURIComponent(currentScannedId)}&action=${actionType}`)
                 .then(response => response.text())
                 .then(text => {
                     resultDiv.style.color = text.includes("成功") ? "green" : "red";
@@ -145,7 +184,13 @@
                 });
         }
 
-        // 開啟彈出分頁並向 GAS 取得資料
+        function closeActionModal() {
+            document.getElementById('actionModal').style.display = "none";
+            // 如果使用者關閉視窗沒有點擊動作，解鎖掃描狀態
+            setTimeout(() => { isProcessing = false; }, 1000);
+        }
+
+        // 開啟已借出清單視窗
         function openBorrowedModal() {
             const modal = document.getElementById('borrowedModal');
             const container = document.getElementById('borrowed-list-container');
@@ -178,12 +223,10 @@
                 });
         }
 
-        // 關閉彈出分頁
         function closeBorrowedModal() {
             document.getElementById('borrowedModal').style.display = "none";
         }
 
-        // 點擊彈出視窗外部灰色區域時自動關閉
         function outsideClose(event) {
             if (event.target.id === 'borrowedModal') {
                 closeBorrowedModal();
