@@ -1,125 +1,105 @@
-function doGet(e) {
-  // 建立排他鎖，防止多人同時讀寫造成資料錯亂（最長等待 10 秒）
-  var lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(10000);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ 
-      status: "error", 
-      message: "系統忙碌中（取得鎖定逾時），請稍後再試。" 
-    })).setMimeType(ContentService.MimeType.JSON);
-  }
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>設備掃描借用系統</title>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; background-color: #f8f9fa; }
+        #reader { width: 100%; max-width: 450px; margin: 0 auto; background: black; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow: hidden; }
+        #result { margin-top: 25px; font-size: 18px; font-weight: bold; color: #333; white-space: pre-wrap; line-height: 1.5; min-height: 60px; }
+        /* 新增選單的樣式 */
+        #camera-select { margin-bottom: 15px; padding: 8px; font-size: 16px; border-radius: 5px; width: 100%; max-width: 300px; }
+    </style>
+</head>
+<body>
+    <h2>📷 設備掃描借用系統</h2>
+    
+    <!-- 新增：手動選擇鏡頭的下拉選單 -->
+    <select id="camera-select"></select>
+    
+    <div id="reader"></div>
+    <div id="result">相機啟動中，請稍候...</div>
 
-  try {
-    var params = (e && e.parameter) ? e.parameter : {};
-    var action = String(params.action || "borrow").trim();
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName("Equipment_List") || ss.getSheets()[0];
-    
-    // 確保有資料可讀取
-    var lastRow = sheet.getLastRow();
-    if (lastRow < 2) {
-      return ContentService.createTextOutput(JSON.stringify({ 
-        status: "error", 
-        message: "表格內沒有找到設備資料（少於 2 行）。" 
-      })).setMimeType(ContentService.MimeType.JSON);
-    }
-    
-    // 讀取範圍資料 (從第 1 行到最後一行，涵蓋欄位 A 到 E)
-    var data = sheet.getRange(1, 1, lastRow, Math.max(sheet.getLastColumn(), 5)).getValues();
-    
-    // 1. 取得所有已借出清單
-    if (action === "getBorrowedList") {
-      var borrowedList = [];
-      for (var i = 1; i < data.length; i++) {
-        var currentStatus = String(data[i][2] || "").trim();
-        if (currentStatus === "借出中" || currentStatus === "已借出") {
-          borrowedList.push({
-            id: String(data[i][0] || "").trim(),
-            name: String(data[i][1] || "").trim(),
-            brand: String(data[i][4] || "").trim()
-          });
+
+    <script>
+        // ★★★ 請替換成您的 GAS 網頁應用程式網址 ★★★
+        const API_URL = "https://script.google.com/macros/s/AKfycbzn8UrMs81rXpLXfUQDzxh8DF87OLD6dw3rNKd4HG12iICBOfdW1rXiMy81pZC_bM2W/exec"; 
+
+
+        let isProcessing = false; 
+        const html5QrCode = new Html5Qrcode("reader");
+        const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+        const cameraSelect = document.getElementById('camera-select');
+
+
+        function onScanSuccess(decodedText) {
+            if (isProcessing) return; 
+            isProcessing = true;
+            
+            if (decodedText.includes("text=")) {
+                decodedText = decodedText.split("text=")[1].split("&")[0];
+            }
+            
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.color = "#0056b3";
+            resultDiv.innerText = `讀取到編號：${decodedText}\n連線中...`;
+            
+            fetch(API_URL + "?id=" + decodedText)
+                .then(response => response.text())
+                .then(text => {
+                    resultDiv.style.color = text.includes("成功") ? "green" : "red";
+                    resultDiv.innerText = text;
+                    setTimeout(() => { 
+                        isProcessing = false; 
+                        resultDiv.style.color = "#333";
+                        resultDiv.innerText = "請對準下一個 QR Code 進行掃描...";
+                    }, 3500); 
+                })
+                .catch(error => {
+                    resultDiv.style.color = "red";
+                    resultDiv.innerText = "系統連線錯誤！";
+                    setTimeout(() => { isProcessing = false; }, 3500);
+                });
         }
-      }
-      return ContentService.createTextOutput(JSON.stringify({ status: "success", data: borrowedList }))
-                           .setMimeType(ContentService.MimeType.JSON);
-    }
 
-    // 2. 借用與歸還邏輯
-    var equipmentId = params.id; 
-    if (!equipmentId) {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "請提供設備 ID" }))
-                           .setMimeType(ContentService.MimeType.JSON);
-    }
-    
-    var targetRow = -1;
-    var eqName = "";
-    var eqBrand = "";
-    var currentStatus = "";
 
-    // 尋找對應的設備編號（忽略前後空白與大小寫差異）
-    var searchId = String(equipmentId).trim().toLowerCase();
-    for (var i = 1; i < data.length; i++) {
-      var rowId = String(data[i][0] || "").trim().toLowerCase();
-      if (rowId === searchId) {
-        targetRow = i + 1; // 試算表列數從 1 開始，陣列從 0 開始，故 +1
-        eqName = data[i][1];
-        eqBrand = data[i][4] || "";
-        currentStatus = String(data[i][2] || "").trim();
-        break;
-      }
-    }
+        // 啟動指定鏡頭的函數
+        function startCamera(cameraId) {
+            html5QrCode.start(cameraId, config, onScanSuccess)
+                .then(() => { document.getElementById('result').innerText = "請對準 QR Code 進行掃描..."; })
+                .catch(err => { console.error(err); });
+        }
 
-    if (targetRow === -1) {
-      return ContentService.createTextOutput(JSON.stringify({ 
-        status: "error", 
-        message: "找不到設備編號：" + equipmentId 
-      })).setMimeType(ContentService.MimeType.JSON);
-    }
 
-    // 執行借用動作
-    if (action === "borrow") {
-      if (currentStatus === "可借用") { 
-        sheet.getRange(targetRow, 3).setValue("借出中"); 
-        return ContentService.createTextOutput(JSON.stringify({ 
-          status: "success", 
-          message: "借用成功！\n" + eqBrand + " " + eqName + "\n狀態已更新為：借出中" 
-        })).setMimeType(ContentService.MimeType.JSON);
-      } else {
-        return ContentService.createTextOutput(JSON.stringify({ 
-          status: "error", 
-          message: "借用失敗！該設備目前狀態為：" + currentStatus 
-        })).setMimeType(ContentService.MimeType.JSON);
-      }
-    } 
-    // 執行歸還動作
-    else if (action === "return") {
-      if (currentStatus === "借出中" || currentStatus === "已借出") { 
-        sheet.getRange(targetRow, 3).setValue("可借用"); 
-        return ContentService.createTextOutput(JSON.stringify({ 
-          status: "success", 
-          message: "歸還成功！\n" + eqBrand + " " + eqName + "\n狀態已更新為：可借用" 
-        })).setMimeType(ContentService.MimeType.JSON);
-      } else {
-        return ContentService.createTextOutput(JSON.stringify({ 
-          status: "error", 
-          message: "歸還失敗！該設備目前狀態為：" + currentStatus + "（未在借出狀態）" 
-        })).setMimeType(ContentService.MimeType.JSON);
-      }
-    } else {
-      return ContentService.createTextOutput(JSON.stringify({ 
-        status: "error", 
-        message: "不支援的操作指令 (action)：" + action 
-      })).setMimeType(ContentService.MimeType.JSON);
-    }
+        // 抓取設備上所有鏡頭並放入下拉選單
+        Html5Qrcode.getCameras().then(devices => {
+            if (devices && devices.length) {
+                devices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.id;
+                    option.text = device.label || `相機 ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
 
-  } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ 
-      status: "error", 
-      message: "伺服器發生內部錯誤：" + error.toString() 
-    })).setMimeType(ContentService.MimeType.JSON);
-  } finally {
-    // 確保無論成功 or 失敗，最後一定會釋放鎖定
-    lock.releaseLock();
-  }
-}
+
+                // 預設啟動選單裡的第一個鏡頭
+                startCamera(cameraSelect.value);
+
+
+                // 當使用者切換選單時，停止目前鏡頭並啟動新鏡頭
+                cameraSelect.addEventListener('change', () => {
+                    html5QrCode.stop().then(() => {
+                        startCamera(cameraSelect.value);
+                    }).catch(err => {
+                        console.error("停止鏡頭失敗", err);
+                    });
+                });
+            }
+        }).catch(err => {
+            document.getElementById('result').innerText = "無法取得相機清單，請確認權限。";
+        });
+    </script>
+</body>
+</html>
