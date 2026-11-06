@@ -6,12 +6,64 @@
     <title>設備掃描借還系統</title>
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 20px; background-color: #f8f9fa; }
-        #reader { width: 100%; max-width: 450px; margin: 0 auto; background: black; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow: hidden; }
-        #result { margin-top: 25px; font-size: 18px; font-weight: bold; color: #333; white-space: pre-wrap; line-height: 1.5; min-height: 60px; }
-        #camera-select { margin-bottom: 15px; padding: 8px; font-size: 16px; border-radius: 5px; width: 100%; max-width: 300px; }
+        body { font-family: sans-serif; text-align: center; padding: 15px; background-color: #f8f9fa; margin: 0; }
+        h2 { margin: 10px 0 15px 0; font-size: 22px; }
         
-        /* 通用彈出視窗 (Modal) 樣式 */
+        #camera-select { margin-bottom: 10px; padding: 8px; font-size: 15px; border-radius: 5px; width: 100%; max-width: 450px; }
+        
+        /* 模式選擇按鈕區塊 */
+        .mode-container {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            max-width: 450px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            border: 2px solid #ccc;
+            background: #e9ecef;
+            color: #495057;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .mode-btn.active-borrow {
+            background-color: #28a745;
+            color: white;
+            border-color: #1e7e34;
+            box-shadow: 0 2px 6px rgba(40, 167, 69, 0.4);
+        }
+        .mode-btn.active-return {
+            background-color: #17a2b8;
+            color: white;
+            border-color: #117a8b;
+            box-shadow: 0 2px 6px rgba(23, 162, 184, 0.4);
+        }
+
+        .btn-primary {
+            width: 100%;
+            max-width: 450px;
+            padding: 10px;
+            font-size: 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        #reader { width: 100%; max-width: 450px; margin: 0 auto; background: black; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow: hidden; }
+        #result { margin-top: 20px; font-size: 18px; font-weight: bold; color: #333; white-space: pre-wrap; line-height: 1.5; min-height: 60px; }
+
+        /* 彈出分頁 (Modal) 樣式 */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -28,7 +80,6 @@
             border-radius: 12px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.2);
             overflow: hidden;
-            animation: fadeIn 0.3s ease;
             text-align: left;
         }
         .modal-header {
@@ -53,33 +104,6 @@
             max-height: 60vh;
             overflow-y: auto;
         }
-        .action-bar {
-            margin: 15px 0;
-        }
-        .btn-primary {
-            padding: 10px 20px;
-            font-size: 16px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
-        .btn-action {
-            width: 100%;
-            padding: 12px;
-            font-size: 18px;
-            font-weight: bold;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            margin-top: 10px;
-        }
-        .btn-borrow { background-color: #28a745; }
-        .btn-return { background-color: #17a2b8; }
-        
         .borrowed-item {
             padding: 10px 12px;
             margin-bottom: 8px;
@@ -95,32 +119,21 @@
     
     <select id="camera-select"></select>
     
+    <!-- 模式切換按鈕 -->
+    <div class="mode-container">
+        <button id="btn-mode-borrow" class="mode-btn active-borrow" onclick="setMode('borrow')">🟢 模式：借出</button>
+        <button id="btn-mode-return" class="mode-btn" onclick="setMode('return')">🔵 模式：歸還</button>
+    </div>
+
     <!-- 查看已借出清單按鈕 -->
-    <div class="action-bar">
+    <div>
         <button class="btn-primary" onclick="openBorrowedModal()">📋 查看目前已借出清單</button>
     </div>
 
     <div id="reader"></div>
-    <div id="result">請對準 QR Code 進行掃描...</div>
+    <div id="result">請選擇模式並對準 QR Code 進行掃描...</div>
 
-    <!-- 1. 掃描後選擇動作的彈出視窗 -->
-    <div id="actionModal" class="modal-overlay">
-        <div class="modal-content">
-            <div class="modal-header">
-                <span>⚡ 選擇設備操作</span>
-                <button class="close-btn" onclick="closeActionModal()">&times;</button>
-            </div>
-            <div class="modal-body" style="text-align: center;">
-                <p style="font-size: 16px; color: #333;">已成功讀取設備編號：</p>
-                <h3 id="scanned-id-display" style="color: #007bff; margin: 5px 0 20px 0;"></h3>
-                
-                <button class="btn-action btn-borrow" onclick="submitAction('borrow')">🟢 確認借出</button>
-                <button class="btn-action btn-return" onclick="submitAction('return')">🔵 確認歸還</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 2. 查看已借出清單的彈出視窗 -->
+    <!-- 彈出已借出清單視窗 -->
     <div id="borrowedModal" class="modal-overlay" onclick="outsideClose(event)">
         <div class="modal-content">
             <div class="modal-header">
@@ -138,10 +151,25 @@
         const API_URL = "https://script.google.com/macros/s/AKfycbxwtngmSkeOPwFi5zo6rheh9ahj27zJof1JoRutNL5eURqSSNmNjERtsxkm_9wIAV5L/exec"; 
 
         let isProcessing = false; 
-        let currentScannedId = "";
+        let currentMode = "borrow"; // 預設為借出模式
         const html5QrCode = new Html5Qrcode("reader");
         const config = { fps: 10, qrbox: { width: 250, height: 250 } };
         const cameraSelect = document.getElementById('camera-select');
+
+        // 切換模式函式
+        function setMode(mode) {
+            currentMode = mode;
+            const borrowBtn = document.getElementById('btn-mode-borrow');
+            const returnBtn = document.getElementById('btn-mode-return');
+            
+            if (mode === 'borrow') {
+                borrowBtn.className = "mode-btn active-borrow";
+                returnBtn.className = "mode-btn";
+            } else {
+                returnBtn.className = "mode-btn active-return";
+                borrowBtn.className = "mode-btn";
+            }
+        }
 
         function onScanSuccess(decodedText) {
             if (isProcessing) return; 
@@ -151,22 +179,15 @@
                 decodedText = decodedText.split("text=")[1].split("&")[0];
             }
             
-            currentScannedId = decodedText.trim();
-            
-            // 彈出選擇動作視窗
-            document.getElementById('scanned-id-display.innerText = currentScannedId; // wait fix below
-            document.getElementById('scanned-id-display').innerText = currentScannedId;
-            document.getElementById('actionModal').style.display = "flex";
-        }
-
-        // 執行借出或歸還請求
-        function submitAction(actionType) {
-            closeActionModal();
+            const equipmentId = decodedText.trim();
             const resultDiv = document.getElementById('result');
-            resultDiv.style.color = "#0056b3";
-            resultDiv.innerText = `正在處理編號 ${currentScannedId} (${actionType === 'borrow' ? '借出' : '歸還'})...`;
+            const modeText = currentMode === 'borrow' ? '借出' : '歸還';
             
-            fetch(`${API_URL}?id=${encodeURIComponent(currentScannedId)}&action=${actionType}`)
+            resultDiv.style.color = "#0056b3";
+            resultDiv.innerText = `讀取到編號：${equipmentId}\n正在執行【${modeText}】處理中...`;
+            
+            // 帶入選擇的 action 傳給 GAS
+            fetch(`${API_URL}?id=${encodeURIComponent(equipmentId)}&action=${currentMode}`)
                 .then(response => response.text())
                 .then(text => {
                     resultDiv.style.color = text.includes("成功") ? "green" : "red";
@@ -182,12 +203,6 @@
                     resultDiv.innerText = "系統連線錯誤！";
                     setTimeout(() => { isProcessing = false; }, 3500);
                 });
-        }
-
-        function closeActionModal() {
-            document.getElementById('actionModal').style.display = "none";
-            // 如果使用者關閉視窗沒有點擊動作，解鎖掃描狀態
-            setTimeout(() => { isProcessing = false; }, 1000);
         }
 
         // 開啟已借出清單視窗
@@ -235,7 +250,7 @@
 
         function startCamera(cameraId) {
             html5QrCode.start(cameraId, config, onScanSuccess)
-                .then(() => { document.getElementById('result').innerText = "請對準 QR Code 進行掃描..."; })
+                .then(() => { document.getElementById('result').innerText = "請選擇模式並對準 QR Code 進行掃描..."; })
                 .catch(err => { console.error(err); });
         }
 
